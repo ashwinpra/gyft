@@ -136,9 +136,7 @@ for day in timetable_dict.keys():
             timetable_dict[day][time][2] = subject_timings[timetable_dict[day][time][0]][1]
 
 r = s.post(COURSES_URL, headers=headers, data=coursepage_details)
-soup = bs(r.text, "html.parser")
-data = json.loads(soup.prettify())
-sub_dict = {item["subno"]: item["subname"] for item in data}
+sub_dict = {item["subno"]: item["subname"] for item in r.json()}
 sub_dict = {k: v.replace("&amp;", "&") for k, v in sub_dict.items()} # replacing &amp; with &
 
 for day in timetable_dict.keys():
