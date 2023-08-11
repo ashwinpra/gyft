@@ -4,12 +4,18 @@ requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 from bs4 import BeautifulSoup as bs
 import json
 import iitkgp_erp_login.erp as erp
-import logging
+import argparse
 
-updated_codes = False
+parser = argparse.ArgumentParser(description='Generate ICS file for IIT KGP timetable.')
+parser.add_argument('--user', help='Roll number')
+parser.add_argument('--sem', help='Current Semester Number')
 
-with open('dept_codes.json') as f:
-    dept_codes = json.load(f)
+args = parser.parse_args()
+
+if args.user is None:
+    args.user = input("Enter your roll number: ")
+if args.sem is None:
+    args.sem = input("Enter your current semester number: ")
 
 headers = {
     'timeout': '20',
@@ -21,9 +27,8 @@ s = requests.Session()
 _, ssoToken = erp.login(headers, s)
 print()
 
-
 ERP_TIMETABLE_URL = "https://erp.iitkgp.ac.in/Acad/student/view_stud_time_table.jsp"
-COURSES_URL = "https://erp.iitkgp.ac.in/Acad/timetable_track.jsp?action=second&dept={}"
+COURSES_URL = "https://erp.iitkgp.ac.in/Academic/student_performance_details_ug.htm"
 
 timetable_details = {
     'ssoToken': ssoToken,
@@ -31,26 +36,12 @@ timetable_details = {
     'menu_id': '40',
 }
 
-def scrape_courses(courses, dept):
-    # find dept code from dept_codes
-    DEPT_URL = COURSES_URL.format(dept)
-    r = s.get(DEPT_URL, headers=headers)
-    soup = bs(r.text, 'html.parser')
-    parentTable = soup.find('table', {'id': 'disptab'})
-
-    rows = parentTable.find_all('tr')
-
-    for row in rows[1:]:
-        if 'bgcolor' in row.attrs:
-            continue 
-        cells = row.find_all('td')  
-        course_code = cells[0].text.strip()
-        course_name = cells[1].text.strip()
-
-        if course_code in courses[dept]:
-            courses[dept][course_code] = course_name
-            logging.info(" {} - {}".format(course_code, course_name))
-
+coursepage_details = {
+    "ssoToken": ssoToken,
+    "semno": args.sem,
+    "rollno": args.user,
+    "order": "asc"
+}
 
 # This is just a hack to get cookies. TODO: do the standard thing here
 abc = s.post(ERP_TIMETABLE_URL, headers=headers, data=timetable_details)
@@ -144,51 +135,19 @@ for day in timetable_dict.keys():
         else:
             timetable_dict[day][time][2] = subject_timings[timetable_dict[day][time][0]][1]
 
-courses = {}
-# grouping courses by dept
-for day in timetable_dict.keys():
-    for time in timetable_dict[day]:
-        timetable_dict[day][time].append(" ")
-        course_code = timetable_dict[day][time][0]
-        course_dept = course_code[:2] 
-        try:
-            dept_code = dept_codes[course_dept]
-        except:
-            dept_code = input("Enter the 2 letter dept code for {}: ".format(course_dept))
-            print()
-            dept_codes[course_dept] = dept_code
-            updated_codes = True
+r = s.post(COURSES_URL, headers=headers, data=coursepage_details)
+soup = bs(r.text, "html.parser")
+data = json.loads(soup.prettify())
+sub_dict = {item["subno"]: item["subname"] for item in data}
+sub_dict = {k: v.replace("&amp;", "&") for k, v in sub_dict.items()} # replacing &amp; with &
 
-        if dept_code not in courses.keys():
-            courses[dept_code] = {}
-        if course_code not in courses[dept_code].keys():
-            courses[dept_code][course_code] = ''
-
-
-# scraping course names deptwise
-for dept in courses.keys():
-    try: 
-        scrape_courses(courses,dept)
-    except:
-        print()
-        logging.error(" Error while scraping course names for course letter code {}".format(dept))
-        logging.info(" You can manually add the course names while executing generate_ics.py")
-        print()
-
-# add course code to dict
 for day in timetable_dict.keys():
     for time in timetable_dict[day]:
         course_code = timetable_dict[day][time][0]
-        dept_code = dept_codes[course_code[:2]]
-        timetable_dict[day][time][3] = courses[dept_code][course_code]
-
+        timetable_dict[day][time].append(sub_dict[course_code])
 
 with open('data.txt', 'w') as outfile:
     json.dump(timetable_dict, outfile, indent = 4, ensure_ascii=False)
 
-if updated_codes:
-    with open('dept_codes.json', 'w') as outfile:
-        json.dump(dept_codes, outfile, indent = 4, ensure_ascii=False)
-    print("\nThe dept_codes.json file has been updated. Please send a PR to the repository for the same.")
 
 print ("\nTimetable saved to data.txt file. You can generate the ICS file now by running generate_ics.py.\n")
